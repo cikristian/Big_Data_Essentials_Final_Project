@@ -1,0 +1,6 @@
+# Web framework for the browser dashboard. MySQL and Kafka dependencies are
+# added when those services are connected in later project stages.
+Django>=5.2,<6.0
+djangorestframework>=3.16,<4.0
+confluent-kafka>=2.12,<3.0
+mysqlclient>=2.2.1
