@@ -39,6 +39,9 @@ Trip generator --> Kafka topic --> Dashboard / MySQL sink
 - Django REST endpoint for publishing events
 - MySQL operational storage for dashboard queries
 - Delay risk estimation in the dashboard layer
+- Command center with a live Kigali map, route volume, transport mix, and live trips
+- Dedicated predictions page with Spark model AUC, accuracy, and F1 score
+- Summary dashboard filters for day, weather, season, transport, event type, and weekday
 - HDFS upload and Spark MLlib training workflow
 - Local Windows tooling for Hadoop, Kafka, and Spark setup
 
@@ -72,6 +75,7 @@ Big_Data_Essentials_Final_Project/
 │   ├── hdfs_and_ml_runbook.md
 │   └── kafka_windows_setup.md
 ├── data/
+│   └── model_metrics.json
 ├── consumer/
 ├── spark/
 ├── tests/
@@ -164,6 +168,12 @@ Then open:
 http://127.0.0.1:8000/
 ```
 
+The dashboard navigation provides three views:
+
+- `/` — command center with the live map, route volume, transport mix, operational signal, and unfinished live trips
+- `/summary/` — database summary with filterable cards, charts, and totals
+- `/predictions/` — live risk estimates and Spark model performance
+
 ### Publish sample trip events
 
 In a separate PowerShell terminal:
@@ -189,7 +199,10 @@ cannot appear to succeed in the wrong database.
 The main dashboard routes are:
 
 - `/` — dashboard page
+- `/summary/` — filterable database summary dashboard
+- `/predictions/` — prediction and model-performance page
 - `/api/dashboard-data/` — summary and event payloads
+- `/api/database-summary/` — filtered database aggregates and chart data
 - `/api/preview-event/` — one generated preview event
 - `/api/trips/publish/` — endpoint to publish trip events
 
@@ -207,6 +220,23 @@ It performs the following actions:
 - persists them to the MySQL `transport_trip_events` table
 - publishes each event to Kafka using `route_id` as the key
 - returns the number of published messages and delivery metadata
+
+## Dashboard Analytics
+
+The summary page accepts the following filters and applies them to the cards,
+charts, totals, and latest records together:
+
+- `day`
+- `weather`
+- `season`
+- `transport`
+- `event_type`
+- `weekday`
+
+Weekday values are restricted to valid values `0` through `6`; unknown weekday
+values are excluded from the chart. The predictions page reads the latest
+published Spark metrics from `data/model_metrics.json` by default. Set
+`MODEL_METRICS_JSON` when metrics are stored at another local path.
 
 ## Data Model
 

@@ -1,4 +1,6 @@
 import math
+import json
+import os
 import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -191,6 +193,10 @@ def dashboard(request):
     return render(request, "operations/dashboard.html")
 
 
+def predictions_page(request):
+    return render(request, "operations/predictions.html")
+
+
 def preview_event(request):
     return JsonResponse(new_preview_event())
 
@@ -239,7 +245,45 @@ def build_summary_from_events(events: list[dict]) -> dict[str, object]:
     }
 
 
-def fetch_recent_events(limit: int = 100) -> list[dict]:
+SUMMARY_FILTER_COLUMNS = {
+    "day": "date",
+    "weather": "weather_condition",
+    "season": "season",
+    "transport": "transport_type",
+    "event_type": "event_type",
+    "weekday": "weekday",
+}
+
+
+def summary_filters(request) -> dict[str, str]:
+    """Read supported summary filters from the query string."""
+    filters = {}
+    for key in SUMMARY_FILTER_COLUMNS:
+        value = str(request.GET.get(key, "")).strip()
+        if value:
+            filters[key] = value
+    if filters.get("weekday") not in {str(index) for index in range(7)}:
+        filters.pop("weekday", None)
+    return filters
+
+
+def summary_where(filters: dict[str, str], include_weekday_quality: bool = False) -> tuple[str, list[str]]:
+    """Build a safe WHERE clause from the whitelisted summary filters."""
+    conditions = []
+    params = []
+    if include_weekday_quality:
+        conditions.append("`weekday` IS NOT NULL AND `weekday` BETWEEN 0 AND 6")
+    for key, value in filters.items():
+        column = SUMMARY_FILTER_COLUMNS[key]
+        if key == "day":
+            conditions.append("DATE(`date`) = %s")
+        else:
+            conditions.append(f"`{column}` = %s")
+        params.append(value)
+    return (" WHERE " + " AND ".join(conditions)) if conditions else "", params
+
+
+def fetch_recent_events(limit: int = 100, filters: dict[str, str] | None = None) -> list[dict]:
     """Return recent trip events from the active database when available."""
     with connection.cursor() as cursor:
         if connection.vendor == "sqlite":
@@ -253,7 +297,8 @@ def fetch_recent_events(limit: int = 100) -> list[dict]:
                     destination_district, origin_latitude, origin_longitude,
                     scheduled_departure, scheduled_arrival,
                     actual_arrival_delay_min, traffic_congestion_index,
-                    precipitation_mm, weather_condition, peak_hour, delayed,
+                    precipitation_mm, weather_condition, peak_hour, weekday,
+                    season, event_type, passengers_carried, distance_km, fare_rwf, delayed,
                     event_generated_at
                 FROM transport_trip_events
                 ORDER BY event_generated_at DESC LIMIT {int(limit)}
@@ -263,21 +308,93 @@ def fetch_recent_events(limit: int = 100) -> list[dict]:
             cursor.execute("SHOW TABLES LIKE %s", ["transport_trip_events"])
             if not cursor.fetchone():
                 return []
+            where, params = summary_where(filters or {})
             cursor.execute(
-                """
+                f"""
                     SELECT trip_id, route_id, transport_type, origin_district,
                         destination_district, origin_latitude, origin_longitude,
                         scheduled_departure, scheduled_arrival,
                         actual_arrival_delay_min, traffic_congestion_index,
-                        precipitation_mm, weather_condition, peak_hour, `delayed`,
+                        precipitation_mm, weather_condition, peak_hour, weekday,
+                        season, event_type, passengers_carried, distance_km, fare_rwf, `delayed`,
                         event_generated_at
                     FROM transport_trip_events
+                    {where}
                     ORDER BY event_generated_at DESC LIMIT %s
                 """,
-                [limit],
+                [*params, limit],
             )
         names = [column[0] for column in cursor.description]
         return [dict(zip(names, row)) for row in cursor.fetchall()]
+
+
+def event_is_live(event: dict, now: datetime | None = None) -> bool:
+    """Return whether a generated trip has not reached its scheduled arrival."""
+    generated_at = event.get("event_generated_at")
+    if not generated_at:
+        return False
+    if isinstance(generated_at, str):
+        generated_at = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    if generated_at.tzinfo is None:
+        generated_at = generated_at.replace(tzinfo=GMT_PLUS_2)
+
+    departure = datetime.strptime(str(event.get("scheduled_departure")), "%H:%M:%S")
+    arrival = datetime.strptime(str(event.get("scheduled_arrival")), "%H:%M:%S")
+    duration = (arrival - departure).total_seconds()
+    if duration < 0:
+        duration += 24 * 60 * 60
+    current_time = now or datetime.now(GMT_PLUS_2)
+    return current_time <= generated_at.astimezone(GMT_PLUS_2) + timedelta(seconds=duration)
+
+
+def fetch_database_analytics(filters: dict[str, str] | None = None) -> dict[str, list[dict[str, object]]]:
+    """Return grouped chart data calculated from every MySQL event."""
+    dimensions = {
+        "weather": ("`weather_condition`", "`weather_condition`"),
+        "season": ("`season`", "`season`"),
+        "peak_hours": (
+            "CASE WHEN `peak_hour` = 1 THEN 'Peak hour' ELSE 'Off-peak' END",
+            "MIN(`peak_hour`)",
+        ),
+        "traffic_congestion": (
+            "CASE WHEN `traffic_congestion_index` < 25 THEN '0-24' "
+            "WHEN `traffic_congestion_index` < 50 THEN '25-49' "
+            "WHEN `traffic_congestion_index` < 75 THEN '50-74' ELSE '75-100' END",
+            "MIN(`traffic_congestion_index`)",
+        ),
+        "weekdays": ("`weekday`", "`weekday`"),
+        "event_types": ("`event_type`", "`event_type`"),
+        "transport_means": ("`transport_type`", "`transport_type`"),
+    }
+    analytics = {}
+    filters = filters or {}
+    with connection.cursor() as cursor:
+        for key, (expression, order_by) in dimensions.items():
+            where, params = summary_where(filters, include_weekday_quality=key == "weekdays")
+            cursor.execute(
+                f"SELECT {expression}, COUNT(*) AS total FROM transport_trip_events "
+                f"{where} GROUP BY {expression} ORDER BY {order_by}",
+                params,
+            )
+            analytics[key] = [
+                {"label": str("Unknown" if label is None else label), "value": int(total)}
+                for label, total in cursor.fetchall()
+            ]
+
+        where, params = summary_where(filters)
+        cursor.execute(
+            "SELECT COALESCE(SUM(passengers_carried), 0), "
+            "COALESCE(SUM(distance_km), 0), COALESCE(SUM(fare_rwf), 0) "
+            f"FROM transport_trip_events{where}",
+            params,
+        )
+        passengers, distance, fare = cursor.fetchone()
+    analytics["totals"] = [
+        {"label": "Passengers carried", "value": float(passengers)},
+        {"label": "Distance (km)", "value": round(float(distance), 2)},
+        {"label": "Fare (RWF)", "value": float(fare)},
+    ]
+    return analytics
 
 
 def predict_event_risk(event: dict) -> dict[str, object]:
@@ -306,6 +423,20 @@ def predict_event_risk(event: dict) -> dict[str, object]:
     }
 
 
+def model_performance() -> dict[str, object]:
+    """Load Spark model metrics when a local metrics JSON file is available."""
+    metrics_path = os.getenv("MODEL_METRICS_JSON", str(PROJECT_ROOT / "data" / "model_metrics.json"))
+    metrics = {"status": "Spark metrics not loaded", "auc": None, "accuracy": None, "f1": None}
+    try:
+        with open(metrics_path, "r", encoding="utf-8") as file:
+            loaded = json.load(file)
+        metrics.update({key: loaded[key] for key in ("auc", "accuracy", "f1") if key in loaded})
+        metrics["status"] = "Spark MLlib model metrics"
+    except (OSError, json.JSONDecodeError, TypeError):
+        pass
+    return metrics
+
+
 def dashboard_data(request):
     """Return MySQL sink data when available, otherwise a truthful demo preview."""
     event = new_preview_event()
@@ -313,10 +444,10 @@ def dashboard_data(request):
     live_events = events
     source = "Generator preview"
     try:
-        events = fetch_recent_events(limit=100)
+        events = [event for event in fetch_recent_events(limit=1000) if event_is_live(event)]
         if events:
             source = "MySQL operational store"
-            live_events = fetch_recent_events(limit=1000)
+            live_events = events
     except DatabaseError:
         # The page remains available while MySQL/Connect is being started.
         pass
@@ -330,14 +461,16 @@ def dashboard_data(request):
     summary = build_summary_from_events(events)
     if source != "Generator preview":
         summary = apply_database_totals(summary)
-    summary["active_trips"] = summary["total_trips"] if source != "Generator preview" else len(live_events)
+    summary["active_trips"] = len(events) if source != "Generator preview" else len(live_events)
     summary["predicted_delayed_trips"] = sum(int(item["predicted_delayed"]) for item in events)
 
     return JsonResponse(
         {
             "source": source,
             "events": events,
+            "live_events": events,
             "summary": summary,
+            "model_performance": model_performance(),
         }
     )
 
@@ -386,30 +519,36 @@ def database_summary_page(request):
     return render(request, "operations/summary.html")
 
 
-def apply_database_totals(summary: dict[str, object]) -> dict[str, object]:
+def apply_database_totals(summary: dict[str, object], filters: dict[str, str] | None = None) -> dict[str, object]:
     """Replace recent-window totals with aggregates calculated across the full table."""
+    where, params = summary_where(filters or {})
     with connection.cursor() as cursor:
         cursor.execute(
-            "SELECT COUNT(*), COALESCE(SUM(`delayed`), 0) FROM transport_trip_events"
+            f"SELECT COUNT(*), COALESCE(SUM(`delayed`), 0) FROM transport_trip_events{where}",
+            params,
         )
         total_trips, delayed_trips = cursor.fetchone()
         cursor.execute(
-            """
+            f"""
             SELECT route_id, COUNT(*) AS route_total
             FROM transport_trip_events
+            {where}
             GROUP BY route_id
             ORDER BY route_total DESC
             LIMIT 1
-            """
+            """,
+            params,
         )
         top_route = cursor.fetchone()
         cursor.execute(
-            """
+            f"""
             SELECT transport_type, COUNT(*) AS transport_total
             FROM transport_trip_events
+            {where}
             GROUP BY transport_type
             ORDER BY transport_type
-            """
+            """,
+            params,
         )
         transport_means = {
             str(transport_type or "Unknown"): int(transport_total)
@@ -428,8 +567,9 @@ def apply_database_totals(summary: dict[str, object]) -> dict[str, object]:
 @api_view(["GET"])
 def database_summary_data(request):
     """Return summary metrics computed from the database records."""
+    filters = summary_filters(request)
     try:
-        events = fetch_recent_events(limit=500)
+        events = fetch_recent_events(limit=500, filters=filters)
     except DatabaseError:
         return JsonResponse({"source": "Unavailable", "events": [], "summary": build_summary_from_events([])})
 
@@ -440,11 +580,23 @@ def database_summary_data(request):
         event.update(predict_event_risk(event))
 
     summary = build_summary_from_events(events)
-    summary = apply_database_totals(summary)
-    summary["active_trips"] = len(events)
+    summary = apply_database_totals(summary, filters=filters)
+    summary["active_trips"] = sum(event_is_live(event) for event in events)
     summary["predicted_delayed_trips"] = sum(int(item["predicted_delayed"]) for item in events)
     summary["source"] = "MySQL operational store"
-    return JsonResponse({"source": "MySQL operational store", "events": events, "summary": summary})
+    try:
+        analytics = fetch_database_analytics(filters=filters)
+    except DatabaseError:
+        analytics = {}
+    return JsonResponse(
+        {
+            "source": "MySQL operational store",
+            "events": events,
+            "summary": summary,
+            "analytics": analytics,
+            "filters": filters,
+        }
+    )
 
 
 @api_view(["POST"])

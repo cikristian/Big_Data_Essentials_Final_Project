@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Database Summary</title>
+  <title>Summary</title>
   <style>
     body {
       margin: 0;
@@ -94,6 +94,26 @@
       font-size: 12px;
       font-weight: 700;
     }
+    .chart-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+    .chart-panel { background:#fff; border-radius:12px; padding:18px; box-shadow:0 8px 20px rgba(0,0,0,.05); }
+    .chart-panel h3 { margin:0 0 14px; font-size:16px; }
+    .chart-row { display:grid; grid-template-columns:125px 1fr 54px; gap:9px; align-items:center; margin:10px 0; font-size:12px; }
+    .chart-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#425777; }
+    .chart-track { height:10px; background:#edf3fa; border-radius:20px; overflow:hidden; }
+    .chart-fill { height:100%; background:linear-gradient(90deg,#49c5e6,#087cf0); border-radius:20px; }
+    .chart-value { text-align:right; color:#6b7b90; }
+    .chart-empty { color:#6b7b90; font-size:13px; }
+    .total-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:12px; }
+    .total-card { background:#f7fafe; border:1px solid #edf1f6; border-radius:8px; padding:12px; }
+    .total-card strong { display:block; margin-top:6px; font-size:20px; }
+    .filters { display:grid; grid-template-columns:repeat(3,minmax(150px,1fr)); gap:12px; align-items:end; }
+    .filter label { display:block; margin-bottom:6px; color:#6b7b90; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
+    .filter select, .filter input { width:100%; padding:10px 11px; border:1px solid #dce6f0; border-radius:8px; background:#fff; color:#10233f; }
+    .filter-actions { display:flex; gap:8px; }
+    .filter-actions button { padding:10px 14px; border:0; border-radius:8px; font-weight:700; cursor:pointer; }
+    .apply-filter { background:#087cf0; color:#fff; }
+    .clear-filter { background:#edf3fa; color:#425777; }
+    @media(max-width:700px){.chart-grid,.total-grid{grid-template-columns:1fr}.chart-row{grid-template-columns:105px 1fr 48px}}
   </style>
 </head>
 <body>
@@ -101,7 +121,7 @@
     <div class="topbar">
       <div>
         <p style="margin:0;color:#087cf0;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;font-size:12px;">Operations summary</p>
-        <h1>Database overview</h1>
+        <h1>Summary</h1>
       </div>
       <button class="btn" id="generate-btn">Generate random trips</button>
     </div>
@@ -126,6 +146,19 @@
     </div>
 
     <div class="panel">
+      <h2>Filter database summary</h2>
+      <form id="summary-filters" class="filters">
+        <div class="filter"><label for="filter-day">Day</label><input id="filter-day" name="day" type="date"></div>
+        <div class="filter"><label for="filter-weather">Weather condition</label><select id="filter-weather" name="weather"><option value="">All weather</option></select></div>
+        <div class="filter"><label for="filter-season">Season</label><select id="filter-season" name="season"><option value="">All seasons</option></select></div>
+        <div class="filter"><label for="filter-transport">Means of transport</label><select id="filter-transport" name="transport"><option value="">All transport</option></select></div>
+        <div class="filter"><label for="filter-event">Event type</label><select id="filter-event" name="event_type"><option value="">All event types</option></select></div>
+        <div class="filter"><label for="filter-weekday">Weekday</label><select id="filter-weekday" name="weekday"><option value="">All weekdays</option></select></div>
+        <div class="filter-actions"><button class="apply-filter" type="submit">Apply filters</button><button class="clear-filter" id="clear-filters" type="button">Clear</button></div>
+      </form>
+    </div>
+
+    <div class="panel">
       <h2>Transport means</h2>
       <div class="status-row" id="transport-badges"></div>
       <table>
@@ -139,6 +172,17 @@
       </table>
     </div>
 
+    <div class="chart-grid">
+      <div class="chart-panel"><h3>Weather condition</h3><div id="chart-weather"></div></div>
+      <div class="chart-panel"><h3>Season</h3><div id="chart-season"></div></div>
+      <div class="chart-panel"><h3>Peak hours</h3><div id="chart-peak-hours"></div></div>
+      <div class="chart-panel"><h3>Traffic congestion index</h3><div id="chart-traffic"></div></div>
+      <div class="chart-panel"><h3>Weekdays</h3><div id="chart-weekdays"></div></div>
+      <div class="chart-panel"><h3>Event type</h3><div id="chart-events"></div></div>
+      <div class="chart-panel"><h3>Transport means</h3><div id="chart-transport"></div></div>
+      <div class="chart-panel"><h3>Passenger, distance and fare totals</h3><div class="total-grid" id="chart-totals"></div></div>
+    </div>
+
     <div class="panel">
       <h2>Database records</h2>
       <div id="records-status" style="margin-top:8px;color:#6b7b90;font-size:13px;">Showing the latest records from the full database.</div>
@@ -147,10 +191,63 @@
   </div>
 
   <script>
-    async function loadSummary() {
-      const response = await fetch('/api/database-summary/?t=' + Date.now(), { cache: 'no-store' });
+    const esc = value => String(value ?? '—').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
+    const weekdayNames = {0:'Monday',1:'Tuesday',2:'Wednesday',3:'Thursday',4:'Friday',5:'Saturday',6:'Sunday'};
+    function renderChart(id, items, valueFormatter = value => value.toLocaleString()) {
+      const target = document.getElementById(id);
+      if (!items || !items.length) { target.innerHTML = '<div class="chart-empty">No database data available.</div>'; return; }
+      const max = Math.max(...items.map(item => Number(item.value) || 0), 1);
+      target.innerHTML = items.map(item => {
+        const label = weekdayNames[item.label] || item.label;
+        const value = Number(item.value) || 0;
+        return `<div class="chart-row"><span class="chart-label" title="${esc(label)}">${esc(label)}</span><span class="chart-track"><span class="chart-fill" style="width:${value / max * 100}%"></span></span><span class="chart-value">${esc(valueFormatter(value))}</span></div>`;
+      }).join('');
+    }
+    function renderAnalytics(analytics) {
+      renderChart('chart-weather', analytics.weather);
+      renderChart('chart-season', analytics.season);
+      renderChart('chart-peak-hours', analytics.peak_hours);
+      renderChart('chart-traffic', analytics.traffic_congestion);
+      renderChart('chart-weekdays', analytics.weekdays);
+      renderChart('chart-events', analytics.event_types);
+      renderChart('chart-transport', analytics.transport_means);
+      const totalTarget = document.getElementById('chart-totals');
+      totalTarget.innerHTML = (analytics.totals || []).map(item => `<div class="total-card"><span>${esc(item.label)}</span><strong>${Number(item.value).toLocaleString()}</strong></div>`).join('') || '<div class="chart-empty">No database totals available.</div>';
+    }
+    let activeFilters = {};
+    function readFilters() {
+      const form = new FormData(document.getElementById('summary-filters'));
+      return Object.fromEntries([...form.entries()].filter(([, value]) => value));
+    }
+    function populateFilter(id, items, selected) {
+      const select = document.getElementById(id);
+      const first = select.options[0].textContent;
+      select.innerHTML = `<option value="">${first}</option>`;
+      (items || []).forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.label;
+        option.textContent = weekdayNames[item.label] || item.label;
+        option.selected = String(item.label) === String(selected || '');
+        select.appendChild(option);
+      });
+    }
+    function updateFilterOptions(analytics) {
+      populateFilter('filter-weather', analytics.weather, activeFilters.weather);
+      populateFilter('filter-season', analytics.season, activeFilters.season);
+      populateFilter('filter-transport', analytics.transport_means, activeFilters.transport);
+      populateFilter('filter-event', analytics.event_types, activeFilters.event_type);
+      populateFilter('filter-weekday', analytics.weekdays, activeFilters.weekday);
+      document.getElementById('filter-day').value = activeFilters.day || '';
+    }
+    async function loadSummary(filters = activeFilters) {
+      const query = new URLSearchParams(filters);
+      query.set('t', Date.now());
+      const response = await fetch('/api/database-summary/?' + query.toString(), { cache: 'no-store' });
       const data = await response.json();
       const summary = data.summary || {};
+      activeFilters = data.filters || filters;
+      updateFilterOptions(data.analytics || {});
+      renderAnalytics(data.analytics || {});
       document.getElementById('total-trips').textContent = summary.total_trips ?? 0;
       document.getElementById('delayed-trips').textContent = summary.delayed_trips ?? 0;
       document.getElementById('delay-rate').textContent = (summary.delay_rate ?? 0) + '%';
@@ -176,6 +273,17 @@
       }).join('');
       document.getElementById('recent-events').innerHTML = rowsHtml;
     }
+
+    document.getElementById('summary-filters').addEventListener('submit', event => {
+      event.preventDefault();
+      activeFilters = readFilters();
+      loadSummary();
+    });
+    document.getElementById('clear-filters').addEventListener('click', () => {
+      activeFilters = {};
+      document.getElementById('summary-filters').reset();
+      loadSummary();
+    });
 
     document.getElementById('generate-btn').addEventListener('click', async () => {
       const count = 25;

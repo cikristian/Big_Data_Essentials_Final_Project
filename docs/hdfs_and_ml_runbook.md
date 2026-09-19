@@ -49,3 +49,9 @@ The job uses only features available at planning/dispatch time. It deliberately
 excludes actual arrival/departure delay to prevent target leakage. It saves the
 pipeline model in `/models/kigali_delay_classifier` and AUC, accuracy, F1, and
 row counts in `/analytics/model_metrics`.
+
+The dashboard predictions page reads the metrics from
+`data/model_metrics.json`. Copy the resulting values into that file using the
+fields `auc`, `accuracy`, `f1`, `training_rows`, and `test_rows`. The page
+displays AUC, accuracy, and F1 as percentages. Alternatively, set
+`MODEL_METRICS_JSON` to a local metrics JSON path before starting Django.

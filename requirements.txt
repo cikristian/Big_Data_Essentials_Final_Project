@@ -4,3 +4,4 @@ Django>=5.2,<6.0
 djangorestframework>=3.16,<4.0
 confluent-kafka>=2.12,<3.0
 mysqlclient>=2.2.1
+reportlab>=5.0.0
