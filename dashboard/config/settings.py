@@ -7,7 +7,12 @@ SECRET_KEY = "development-only-replace-before-deployment"
 DEBUG = True
 ALLOWED_HOSTS: list[str] = []
 
-INSTALLED_APPS = ["rest_framework", "operations"]
+INSTALLED_APPS = [
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "rest_framework",
+    "operations",
+]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -27,20 +32,38 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": os.getenv("MYSQL_DATABASE", "Rwanda_Public_Transport"),
-        "USER": os.getenv("MYSQL_USER", "root"),
-        "PASSWORD": os.getenv("MYSQL_PASSWORD", ""),
-        "HOST": os.getenv("MYSQL_HOST", "localhost"),
-        "PORT": os.getenv("MYSQL_PORT", "3306"),
-        "OPTIONS": {"charset": "utf8mb4"},
+mysql_configured = any(
+    [
+        os.getenv("MYSQL_DATABASE"),
+        os.getenv("MYSQL_USER"),
+        os.getenv("MYSQL_PASSWORD"),
+        os.getenv("MYSQL_HOST"),
+        os.getenv("MYSQL_PORT"),
+    ]
+)
+
+if mysql_configured:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.mysql",
+            "NAME": os.getenv("MYSQL_DATABASE", "Rwanda_Public_Transport"),
+            "USER": os.getenv("MYSQL_USER", "root"),
+            "PASSWORD": os.getenv("MYSQL_PASSWORD", ""),
+            "HOST": os.getenv("MYSQL_HOST", "localhost"),
+            "PORT": os.getenv("MYSQL_PORT", "3306"),
+            "OPTIONS": {"charset": "utf8mb4"},
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "Africa/Kigali"
+TIME_ZONE = "Etc/GMT-2"
 USE_I18N = True
 USE_TZ = True
 

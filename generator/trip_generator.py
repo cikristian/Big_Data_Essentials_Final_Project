@@ -13,13 +13,15 @@ import json
 import random
 import sys
 import time
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator, TextIO
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CSV = PROJECT_ROOT / "rwanda_public_transport_delays.csv"
+GMT_PLUS_2 = timezone(timedelta(hours=2), name="GMT+2")
 INTEGER_FIELDS = {
     "fare_rwf", "passengers_carried", "actual_departure_delay_min",
     "actual_arrival_delay_min", "event_attendance_est", "traffic_congestion_index",
@@ -61,7 +63,7 @@ class TripEventGenerator:
     def next_event(self, event_time: datetime | None = None) -> dict[str, Any]:
         """Build one event while retaining a sampled record's data relationships."""
         source = self.random.choice(self.seed_rows).copy()
-        event_time = event_time or datetime.now().astimezone()
+        event_time = event_time or datetime.now(GMT_PLUS_2)
         scheduled_duration = duration_minutes(
             source["scheduled_departure"], source["scheduled_arrival"]
         )
@@ -70,7 +72,8 @@ class TripEventGenerator:
 
         self.sequence += 1
         source["trip_id"] = (
-            f"SIM-{scheduled_departure.strftime('%Y%m%d%H%M%S')}-{self.sequence:06d}"
+            f"SIM-{scheduled_departure.strftime('%Y%m%d%H%M%S')}-"
+            f"{uuid.uuid4().hex[:12]}"
         )
         source["date"] = scheduled_departure.strftime("%Y-%m-%d")
         source["time"] = scheduled_departure.strftime("%H:%M:%S")
