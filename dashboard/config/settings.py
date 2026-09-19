@@ -3,6 +3,26 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+def load_project_env() -> None:
+    """Load simple KEY=VALUE settings from the project-level .env file."""
+    env_path = BASE_DIR.parent / ".env"
+    if not env_path.is_file():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name = name.strip()
+        value = value.strip().strip('"').strip("'")
+        if name:
+            os.environ.setdefault(name, value)
+
+
+load_project_env()
+
 SECRET_KEY = "development-only-replace-before-deployment"
 DEBUG = True
 ALLOWED_HOSTS: list[str] = []
@@ -42,28 +62,20 @@ mysql_configured = any(
     ]
 )
 
-if mysql_configured:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.mysql",
-            "NAME": os.getenv("MYSQL_DATABASE", "Rwanda_Public_Transport"),
-            "USER": os.getenv("MYSQL_USER", "root"),
-            "PASSWORD": os.getenv("MYSQL_PASSWORD", ""),
-            "HOST": os.getenv("MYSQL_HOST", "localhost"),
-            "PORT": os.getenv("MYSQL_PORT", "3306"),
-            "OPTIONS": {"charset": "utf8mb4"},
-        }
+DATABASES = {
+    "default": {
+    "ENGINE": "django.db.backends.mysql",
+    "NAME": os.getenv("MYSQL_DATABASE", "Rwanda_Public_Transport"),
+    "USER": os.getenv("MYSQL_USER", "root"),
+    "PASSWORD": os.getenv("MYSQL_PASSWORD", ""),
+    "HOST": os.getenv("MYSQL_HOST", "localhost"),
+    "PORT": os.getenv("MYSQL_PORT", "3306"),
+    "OPTIONS": {"charset": "utf8mb4"},
     }
-else:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
-    }
+}
 
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "Etc/GMT-2"
+TIME_ZONE = "Etc/GMT+2"
 USE_I18N = True
 USE_TZ = True
 

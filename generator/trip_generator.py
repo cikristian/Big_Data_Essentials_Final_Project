@@ -118,6 +118,51 @@ def write_events(
             next_deadline = time.monotonic()
 
 
+def write_events_to_mysql(
+    generator: TripEventGenerator,
+    records_per_second: float,
+    count: int | None,
+) -> int:
+    """Generate events and persist them through the configured Django database."""
+    dashboard_dir = PROJECT_ROOT / "dashboard"
+    if str(dashboard_dir) not in sys.path:
+        sys.path.insert(0, str(dashboard_dir))
+
+    import os
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    import django
+
+    django.setup()
+
+    from django.db import connection
+
+    if connection.vendor != "mysql":
+        raise RuntimeError(
+            "--mysql requires Django to use MySQL. Set MYSQL_DATABASE, MYSQL_USER, "
+            "MYSQL_PASSWORD, MYSQL_HOST, and MYSQL_PORT before running the generator."
+        )
+
+    from operations.views import store_events_in_mysql
+
+    interval = 1 / records_per_second
+    next_deadline = time.monotonic()
+    inserted = 0
+    for index, event in enumerate(generator.events(), start=1):
+        inserted += store_events_in_mysql([event])
+        if count is not None and index >= count:
+            return inserted
+
+        next_deadline += interval
+        remaining = next_deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(remaining)
+        else:
+            next_deadline = time.monotonic()
+
+    return inserted
+
+
 def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--csv", type=Path, default=DEFAULT_CSV, help="Seed CSV path")
@@ -126,6 +171,11 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, help="Optional seed for reproducible sampling")
     parser.add_argument(
         "--output", type=Path, help="NDJSON output file; omit to write to standard output"
+    )
+    parser.add_argument(
+        "--mysql",
+        action="store_true",
+        help="Persist generated events directly to the configured MySQL database",
     )
     parsed = parser.parse_args()
     if parsed.rate <= 0:
@@ -140,7 +190,15 @@ def arguments() -> argparse.Namespace:
 def main() -> None:
     options = arguments()
     event_generator = TripEventGenerator(options.csv, options.seed)
-    if options.output:
+    if options.mysql and options.output:
+        raise SystemExit("--mysql cannot be combined with --output")
+    if options.mysql:
+        try:
+            inserted = write_events_to_mysql(event_generator, options.rate, options.count)
+        except RuntimeError as error:
+            raise SystemExit(str(error)) from error
+        print(f"Inserted {inserted} generated events into MySQL.")
+    elif options.output:
         options.output.parent.mkdir(parents=True, exist_ok=True)
         with options.output.open("w", encoding="utf-8", newline="") as destination:
             write_events(event_generator, destination, options.rate, options.count)

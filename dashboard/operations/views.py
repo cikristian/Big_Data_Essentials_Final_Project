@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from django.conf import settings
-from django.db import DatabaseError, connection
+from django.db import DatabaseError, connection, connections
 from django.http import JsonResponse
 from django.shortcuts import render
 
@@ -75,7 +75,7 @@ def keep_delay_rate_in_range(events: list[dict], minimum: float = 20, maximum: f
         return
 
     with connection.cursor() as cursor:
-        cursor.execute("SELECT COUNT(*), COALESCE(SUM(delayed), 0) FROM transport_trip_events")
+        cursor.execute("SELECT COUNT(*), COALESCE(SUM(`delayed`), 0) FROM transport_trip_events")
         existing_total, existing_delayed = cursor.fetchone()
 
     new_total = int(existing_total) + len(events)
@@ -90,8 +90,9 @@ def keep_delay_rate_in_range(events: list[dict], minimum: float = 20, maximum: f
         event["delayed"] = int(index < target_delayed)
 
 
-def store_events_in_mysql(events: list[dict]) -> int:
+def _store_events_in_database(events: list[dict], database_alias: str = "default") -> int:
     """Persist generated events directly for dashboard queries and replay."""
+    database_connection = connections[database_alias]
     rows = []
     for event in events:
         values = dict(event)
@@ -99,8 +100,8 @@ def store_events_in_mysql(events: list[dict]) -> int:
         values["event_generated_at"] = generated_at.astimezone(GMT_PLUS_2).replace(tzinfo=None)
         rows.append(tuple(values.get(column) for column in MYSQL_EVENT_COLUMNS))
 
-    with connection.cursor() as cursor:
-        if connection.vendor == "sqlite":
+    with database_connection.cursor() as cursor:
+        if database_connection.vendor == "sqlite":
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS transport_trip_events (
@@ -179,6 +180,11 @@ def store_events_in_mysql(events: list[dict]) -> int:
             rows,
         )
     return len(rows)
+
+
+def store_events_in_mysql(events: list[dict]) -> int:
+    """Persist events to the configured MySQL database."""
+    return _store_events_in_database(events)
 
 
 def dashboard(request):

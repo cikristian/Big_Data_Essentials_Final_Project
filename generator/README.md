@@ -22,3 +22,18 @@ To persist a reproducible test stream:
 `--rate` controls the target records per second. Omit `--count` to run until
 you stop it with `Ctrl+C`. The later Django REST producer will import
 `TripEventGenerator` rather than duplicate its event logic.
+
+To generate records and insert them directly into the configured MySQL database:
+
+```powershell
+$env:MYSQL_DATABASE = "Rwanda_Public_Transport"
+$env:MYSQL_USER = "root"
+$env:MYSQL_PASSWORD = "your-password"
+$env:MYSQL_HOST = "localhost"
+$env:MYSQL_PORT = "3306"
+.\.venv\Scripts\python.exe .\generator\trip_generator.py --rate 5 --count 10 --mysql
+```
+
+The `--mysql` mode reuses the dashboard database writer and refuses to run when
+Django is configured for SQLite. The database must exist before the first run;
+the `transport_trip_events` table is created automatically.

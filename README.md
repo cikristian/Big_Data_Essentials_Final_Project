@@ -93,14 +93,20 @@ Big_Data_Essentials_Final_Project/
 
 Before running the project, make sure the following are available on your Windows machine:
 
-- Python virtual environment
-- MySQL Server installed and running
-- Java 17+ for Kafka and Hadoop tooling
-- Apache Kafka 4.3.1 or compatible version
-- Apache Hadoop and Spark installed locally
-- Access to the project folder with PowerShell
 
-## Setup
+
+### Replicate existing SQLite data to MySQL
+
+If the dashboard previously generated records while Django was using SQLite,
+copy them into MySQL with:
+
+```powershell
+.\.venv\Scripts\python.exe .\dashboard\manage.py replicate_sqlite_to_mysql
+```
+
+The command reads `dashboard/db.sqlite3`, copies records in batches, and can be
+run again safely. Stop the dashboard while running it if you need an exact
+point-in-time copy.
 
 ### 1. Create and activate a virtual environment
 
@@ -127,7 +133,13 @@ $env:MYSQL_HOST = "localhost"
 $env:MYSQL_PORT = "3306"
 ```
 
-You may need to create the database manually before first use.
+These variables must be present in the same PowerShell session that starts
+Django. Alternatively, copy `.env.example` to `.env` and update the password;
+the project loads that file automatically. You may need to create the database
+manually before first use.
+
+The dashboard now uses MySQL for all runtime reads and writes. Restart Django
+after creating or changing `.env` so it loads the MySQL credentials.
 
 ### 4. Start Kafka
 
@@ -161,6 +173,16 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/trips/publish/ -Co
 ```
 
 This generates trips from the CSV seed distribution, stores them in MySQL, and publishes them to the configured Kafka topic.
+
+To generate events without Kafka and insert them directly into MySQL:
+
+```powershell
+.\.venv\Scripts\python.exe .\generator\trip_generator.py --rate 5 --count 10 --mysql
+```
+
+Run this in the same PowerShell session where the `MYSQL_*` variables from the
+setup step are configured. The command rejects the SQLite fallback so records
+cannot appear to succeed in the wrong database.
 
 ### Inspect the dashboard data
 
