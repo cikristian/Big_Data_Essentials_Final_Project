@@ -246,6 +246,9 @@
       const data = await response.json();
       const summary = data.summary || {};
       activeFilters = data.filters || filters;
+      const pageQuery = new URLSearchParams(activeFilters);
+      const pageUrl = pageQuery.toString() ? `${window.location.pathname}?${pageQuery}` : window.location.pathname;
+      window.history.replaceState(null, '', pageUrl);
       updateFilterOptions(data.analytics || {});
       renderAnalytics(data.analytics || {});
       document.getElementById('total-trips').textContent = summary.total_trips ?? 0;
@@ -297,8 +300,12 @@
       await loadSummary();
     });
 
-    loadSummary();
-    setInterval(loadSummary, 2000);
+    activeFilters = Object.fromEntries(
+      [...new URLSearchParams(window.location.search).entries()]
+        .filter(([key]) => key !== 't')
+    );
+    loadSummary(activeFilters);
+    setInterval(() => loadSummary(activeFilters), 2000);
   </script>
 </body>
 </html>

@@ -2,3 +2,4 @@
 __pycache__/
 *.py[cod]
 dashboard/db.sqlite3
+infrastructure/hdfs-data/

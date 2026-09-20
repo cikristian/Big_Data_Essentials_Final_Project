@@ -15,7 +15,7 @@
 </head>
 <body>
   <div class="app">
-    <aside class="sidebar"><a class="logo" href="/">Nya<span>Go</span></a><a class="nav active" href="/">◈ &nbsp; Command center</a><a class="nav" href="/summary/">▣ &nbsp; Summary</a><a class="nav" href="/predictions/">◒ &nbsp; Predictions</a><div class="sidebar-foot">Kigali urban mobility<br>Big Data Essentials · v1.0</div></aside>
+    <aside class="sidebar"><a class="logo" href="/">KPTA<span>Go</span></a><a class="nav active" href="/">◈ &nbsp; Command center</a><a class="nav" href="/summary/">▣ &nbsp; Summary</a><a class="nav" href="/predictions/">◒ &nbsp; Predictions</a><div class="sidebar-foot">Kigali urban mobility<br>Big Data Essentials · v1.0</div></aside>
     <main class="main">
       <header class="topbar"><div><p class="eyebrow">Operations dashboard</p><h1 class="title">Public Transport Command Center</h1><p class="subtitle">Kigali urban delay and demand analytics</p></div><div><div class="status"><span class="dot"></span><span id="source">Connecting to stream...</span></div><button class="refresh" id="refresh">Refresh now</button></div></header>
       <section class="kpis"><article class="card"><div class="label">STORED LIVE EVENTS</div><div class="metric" id="active">—</div><div class="note">● Generated and saved every 2 seconds</div></article><article class="card"><div class="label">OBSERVED DELAY RATE</div><div class="metric" id="risk">—</div><div class="note warn" id="observed-note">From recent events</div></article><article class="card"><div class="label">PREDICTED DELAYS</div><div class="metric" id="predicted">—</div><div class="note warn">Feature-based risk forecast</div></article><article class="card"><div class="label">TOP ACTIVE ROUTE</div><div class="metric" id="route">—</div><div class="note">Highest current volume</div></article></section>
@@ -52,6 +52,28 @@
     const esc=value=>String(value??'—').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
     function render(data){const summary=data.summary,events=data.events||[],model=data.model_performance||{};source.textContent=data.source;active.textContent=summary.active_trips;risk.textContent=summary.delay_rate+'%';predicted.textContent=summary.predicted_delayed_trips;route.textContent=summary.top_route;updated.textContent='Updated '+new Date().toLocaleTimeString();document.querySelector('#model-status').textContent=model.status||'Metrics unavailable';document.querySelector('#model-auc').textContent=model.auc==null?'—':(Number(model.auc)*100).toFixed(1)+'%';document.querySelector('#model-accuracy').textContent=model.accuracy==null?'—':(Number(model.accuracy)*100).toFixed(1)+'%';document.querySelector('#model-f1').textContent=model.f1==null?'—':(Number(model.f1)*100).toFixed(1)+'%';document.querySelector('#observed-note').textContent=summary.delayed_trips+' observed delayed trips';const probability=Number(summary.highest_risk_probability||0);document.querySelector('#risk-number').textContent=Math.round(probability)+'%';document.querySelector('#risk-route').textContent=summary.highest_risk_route==='-'?'No route alert':summary.highest_risk_route;document.querySelector('#risk-copy').textContent=summary.highest_risk_route==='-'?'Prediction appears when live trip features arrive.':`Estimated delay risk is ${Math.round(probability)}% on the current highest-risk route.`;document.querySelector('#prediction-source').textContent='Prediction source: '+(events[0]?.prediction_source||'waiting');document.querySelector('#risk-ring').style.background=`conic-gradient(var(--orange) 0 ${probability}%,#e8eff7 ${probability}% 100%)`;document.querySelector('#trips').innerHTML=events.slice(0,8).map(event=>{const delayed=Number(event.predicted_delayed);return `<div class="trip"><div><div class="route">${esc(event.route_id)}</div><div class="detail">${esc(event.transport_type)} · ${esc(event.origin_district)} · risk ${esc(event.delay_probability)}%</div></div><span class="badge ${delayed?'high':'low'}">${delayed?'Predicted delay':'Low risk'}</span></div>`}).join('')||'<div class="meta">No live trips currently in progress</div>'}
     async function refresh(){try{const response=await fetch('/api/dashboard-data/?t='+Date.now(),{cache:'no-store'});if(!response.ok)throw new Error(response.status);render(await response.json())}catch(error){source.textContent='Stream unavailable';console.error(error)}}document.querySelector('#refresh').addEventListener('click',refresh);refresh();setInterval(refresh,2000);
+  </script>
+  <script>
+    async function refreshRouteVolume(){
+      try{
+        const response=await fetch('/api/dashboard-data/?t='+Date.now(),{cache:'no-store'});
+        if(!response.ok) throw new Error(response.status);
+        const events=(await response.json()).events||[];
+        const counts=events.reduce((result,event)=>{
+          const route=event.route_id||'Unknown';
+          result[route]=(result[route]||0)+1;
+          return result;
+        },{});
+        const entries=Object.entries(counts).sort(([,left],[,right])=>right-left).slice(0,6);
+        const maximum=entries[0]?.[1]||1;
+        document.querySelector('#bars').innerHTML=entries.length
+          ? entries.map(([route,count])=>`<div class="bar"><span class="bar-label">${esc(route)}</span><span class="bar-track"><span class="bar-fill" style="width:${count/maximum*100}%"></span></span><strong>${count}</strong></div>`).join('')
+          : '<span class="meta">No route data</span>';
+      }catch(error){
+        console.error('Route volume refresh failed',error);
+      }
+    }
+    refreshRouteVolume();setInterval(refreshRouteVolume,2000);
   </script>
   <script>
     const mixColors={Moto:'#087cf0',Taxi:'#21b8a6',Bus:'#f28c36'};

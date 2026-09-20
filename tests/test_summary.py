@@ -30,4 +30,5 @@ def test_build_summary_from_events_has_total_and_transport_breakdown():
     assert summary["total_trips"] == 3
     assert summary["delayed_trips"] == 2
     assert summary["top_route"] == "R1"
+    assert summary["route_counts"] == {"R1": 2, "R2": 1}
     assert summary["transport_means"] == {"Bus": 2, "Taxi": 1}
